@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Conversation } from '@elevenlabs/client'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { plainTextForSpeech } from './voice/plainText'
 import './App.css'
 
 const SESSION_KEY = 'omnipro_session_id'
@@ -12,6 +12,13 @@ type ChatMsg = {
 }
 
 type Part = { type: 'md'; text: string } | { type: 'artifact'; html: string }
+
+type McpToolCallSuccess = {
+  tool_call_id?: string
+  tool_name?: string
+  state?: 'success' | 'loading' | 'failure' | 'awaiting_approval'
+  result?: unknown[]
+}
 
 function MicIcon() {
   return (
@@ -46,22 +53,6 @@ function MicIcon() {
         strokeWidth="1.8"
         strokeLinecap="round"
       />
-    </svg>
-  )
-}
-
-function PlayIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M8 5v14l11-7L8 5Z" />
-    </svg>
-  )
-}
-
-function StopIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M6 6h12v12H6V6Z" />
     </svg>
   )
 }
@@ -142,12 +133,40 @@ function parseSseBlocks(buffer: string): { events: unknown[]; rest: string } {
   return { events, rest }
 }
 
-function pickRecorderMime(): string | undefined {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
-  for (const c of candidates) {
-    if (MediaRecorder.isTypeSupported(c)) return c
+function collectImageMarkdownFromUnknown(
+  value: unknown,
+  out: Set<string>,
+): void {
+  if (typeof value === 'string') {
+    const fromMarkdown = value.match(/!\[[^\]]*]\(([^)]+)\)/g)
+    fromMarkdown?.forEach((m) => out.add(m))
+
+    const urls = value.match(/https?:\/\/[^\s)"']+|\/api\/pages\/[^\s)"']+/g)
+    urls?.forEach((u) => {
+      if (u.endsWith('.png') || u.includes('/api/pages/')) {
+        out.add(`![Manual page](${u})`)
+      }
+    })
+    return
   }
-  return undefined
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectImageMarkdownFromUnknown(item, out))
+    return
+  }
+
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (typeof obj.markdown_for_chat === 'string') out.add(obj.markdown_for_chat)
+    if (typeof obj.image_url === 'string') out.add(`![Manual page](${obj.image_url})`)
+    Object.values(obj).forEach((v) => collectImageMarkdownFromUnknown(v, out))
+  }
+}
+
+function imageMarkdownFromMcpSuccess(call: McpToolCallSuccess): string[] {
+  const out = new Set<string>()
+  collectImageMarkdownFromUnknown(call.result, out)
+  return Array.from(out)
 }
 
 export default function App() {
@@ -158,35 +177,26 @@ export default function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [recording, setRecording] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const [speakingIndex, setSpeakingIndex] = useState<number | null>(null)
-  const [ttsLoadingIndex, setTtsLoadingIndex] = useState<number | null>(null)
+  const [voiceConnected, setVoiceConnected] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
-  const skipNextTranscribeRef = useRef(false)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const speechUrlRef = useRef<string | null>(null)
+  const conversationRef = useRef<Conversation | null>(null)
+  const seenMcpToolCallsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (sessionId) localStorage.setItem(SESSION_KEY, sessionId)
   }, [sessionId])
 
-  const stopPlayback = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current = null
+  const stopVoice = useCallback(async () => {
+    try {
+      await conversationRef.current?.endSession()
+    } catch {
+      /* ignore */
     }
-    if (speechUrlRef.current) {
-      URL.revokeObjectURL(speechUrlRef.current)
-      speechUrlRef.current = null
-    }
-    setSpeakingIndex(null)
+    conversationRef.current = null
+    seenMcpToolCallsRef.current.clear()
+    setVoiceConnected(false)
   }, [])
-
-  useEffect(() => () => stopPlayback(), [stopPlayback])
 
   const sendWithText = useCallback(
     async (text: string) => {
@@ -301,146 +311,126 @@ export default function App() {
     await sendWithText(text)
   }, [input, loading, sendWithText])
 
-  const playAssistant = useCallback(
-    async (index: number, content: string) => {
-      if (content === '…') return
-      const plain = plainTextForSpeech(content)
-      if (!plain.trim()) {
-        setError('Nothing to read aloud for this message.')
-        return
-      }
-      stopPlayback()
-      setError(null)
-      setTtsLoadingIndex(index)
-      try {
-        const r = await fetch('/api/voice/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: plain }),
-        })
-        if (!r.ok) {
-          const t = await r.text()
-          throw new Error(t || r.statusText)
-        }
-        const blob = await r.blob()
-        const url = URL.createObjectURL(blob)
-        speechUrlRef.current = url
-        const audio = new Audio(url)
-        audioRef.current = audio
-        audio.onended = () => stopPlayback()
-        audio.onerror = () => {
-          setError('Audio playback failed.')
-          stopPlayback()
-        }
-        setSpeakingIndex(index)
-        await audio.play()
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e))
-        stopPlayback()
-      } finally {
-        setTtsLoadingIndex(null)
-      }
-    },
-    [stopPlayback],
-  )
-
-  const onPlayToggle = useCallback(
-    (index: number, content: string) => {
-      if (speakingIndex === index) {
-        stopPlayback()
-        return
-      }
-      void playAssistant(index, content)
-    },
-    [playAssistant, speakingIndex, stopPlayback],
-  )
-
-  const stopRecordingInternal = useCallback(() => {
-    const mr = mediaRecorderRef.current
-    if (!mr || mr.state === 'inactive') {
-      setRecording(false)
-      return
-    }
-    mr.stop()
-  }, [])
-
-  const startRecording = useCallback(async () => {
-    if (loading || transcribing || recording) return
+  const startVoice = useCallback(async () => {
+    if (voiceConnected) return
     setError(null)
-    skipNextTranscribeRef.current = false
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = pickRecorderMime()
-      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
-      chunksRef.current = []
-      mr.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data)
-      }
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        mediaRecorderRef.current = null
-        if (skipNextTranscribeRef.current) {
-          skipNextTranscribeRef.current = false
-          chunksRef.current = []
-          setTranscribing(false)
-          return
-        }
-        const blobType = mr.mimeType || 'audio/webm'
-        const blob = new Blob(chunksRef.current, { type: blobType })
-        chunksRef.current = []
-        if (blob.size < 100) {
-          setTranscribing(false)
-          setError('Recording too short.')
-          return
-        }
-        setTranscribing(true)
-        try {
-          const fd = new FormData()
-          const ext = blobType.includes('webm') ? 'webm' : blobType.includes('mp4') ? 'm4a' : 'bin'
-          fd.append('audio', blob, `recording.${ext}`)
-          const r = await fetch('/api/voice/transcribe', { method: 'POST', body: fd })
-          if (!r.ok) {
-            const t = await r.text()
-            throw new Error(t || r.statusText)
-          }
-          const data = (await r.json()) as { text?: string }
-          const t = (data.text || '').trim()
-          if (!t) {
-            setError('No speech recognized.')
-            return
-          }
-          await sendWithText(t)
-        } catch (e: unknown) {
-          setError(e instanceof Error ? e.message : String(e))
-        } finally {
-          setTranscribing(false)
-        }
-      }
-      mediaRecorderRef.current = mr
-      mr.start()
-      setRecording(true)
+      await navigator.mediaDevices.getUserMedia({ audio: true })
     } catch {
       setError('Microphone permission denied or unavailable.')
+      return
     }
-  }, [loading, recording, sendWithText, transcribing])
+    try {
+      seenMcpToolCallsRef.current.clear()
+      const r = await fetch('/api/voice/convai/signed-url')
+      if (!r.ok) {
+        const err = await r.text()
+        throw new Error(err || r.statusText)
+      }
+      const data = (await r.json()) as { signed_url?: string }
+      const signedUrl = data.signed_url
+      if (!signedUrl) throw new Error('Missing signed_url')
 
-  const toggleMic = useCallback(() => {
-    if (loading || transcribing) return
-    if (recording) {
-      stopRecordingInternal()
-      setRecording(false)
-    } else {
-      void startRecording()
+      const conv = await Conversation.startSession({
+        signedUrl,
+        connectionType: 'websocket',
+        onConnect: () => setVoiceConnected(true),
+        onDisconnect: () => {
+          conversationRef.current = null
+          setVoiceConnected(false)
+        },
+        onError: (m) => {
+          setError(typeof m === 'string' ? m : JSON.stringify(m))
+        },
+        onMCPToolCall: (call) => {
+          // MCP tool call results do NOT come through `onMessage` (that callback is
+          // higher-level chat messages). Listen here for manual page image results.
+          const c = call as McpToolCallSuccess
+          if (!c || c.state !== 'success' || c.tool_name !== 'get_manual_page_image') return
+          if (c.tool_call_id && seenMcpToolCallsRef.current.has(c.tool_call_id)) return
+          if (c.tool_call_id) seenMcpToolCallsRef.current.add(c.tool_call_id)
+
+          const imageMd = imageMarkdownFromMcpSuccess(c)
+          if (imageMd.length === 0) return
+
+          setMessages((m) => {
+            const copy = [...m]
+            const append = `\n\n${imageMd.join('\n\n')}`
+            const last = copy[copy.length - 1]
+            if (last?.role === 'assistant') {
+              const content = last.content || ''
+              if (!imageMd.some((md) => content.includes(md))) {
+                copy[copy.length - 1] = { ...last, content: content + append }
+              }
+            } else {
+              copy.push({ role: 'assistant', content: imageMd.join('\n\n') })
+            }
+            return copy
+          })
+        },
+        onMessage: (message) => {
+          const msg = message as {
+            type?: string
+            user_transcription_event?: { user_transcript?: string }
+            agent_response_event?: { agent_response?: string }
+            text_response_part?: { type?: string; text?: string }
+          }
+          if (msg?.type === 'user_transcript') {
+            const t = msg.user_transcription_event?.user_transcript
+            if (t) setMessages((m) => [...m, { role: 'user', content: String(t) }])
+          }
+          if (msg?.type === 'agent_response') {
+            const t = msg.agent_response_event?.agent_response
+            if (!t) return
+            setMessages((m) => {
+              const copy = [...m]
+              const last = copy[copy.length - 1]
+              if (last?.role === 'assistant') {
+                copy[copy.length - 1] = { ...last, content: String(t) }
+              } else {
+                copy.push({ role: 'assistant', content: String(t) })
+              }
+              return copy
+            })
+          }
+          if (msg?.type === 'agent_chat_response_part') {
+            const part = msg.text_response_part
+            if (!part) return
+            if (part.type === 'start') {
+              setMessages((m) => [...m, { role: 'assistant', content: '' }])
+            } else if (part.type === 'delta') {
+              setMessages((m) => {
+                const copy = [...m]
+                const last = copy[copy.length - 1]
+                if (last?.role === 'assistant') {
+                  copy[copy.length - 1] = {
+                    ...last,
+                    content: (last.content || '') + String(part.text || ''),
+                  }
+                }
+                return copy
+              })
+            }
+          }
+        },
+      })
+      conversationRef.current = conv
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+      await stopVoice()
     }
-  }, [loading, recording, startRecording, stopRecordingInternal, transcribing])
+  }, [stopVoice, voiceConnected])
+
+  const toggleVoice = useCallback(() => {
+    if (voiceConnected) {
+      void stopVoice()
+    } else {
+      void startVoice()
+    }
+  }, [voiceConnected, startVoice, stopVoice])
 
   const reset = async () => {
-    skipNextTranscribeRef.current = true
-    stopRecordingInternal()
-    mediaRecorderRef.current = null
-    setRecording(false)
-    setTranscribing(false)
-    stopPlayback()
+    await stopVoice()
     if (sessionId) {
       try {
         await fetch('/api/session/reset', {
@@ -468,6 +458,9 @@ export default function App() {
             <button type="button" onClick={reset}>
               New chat
             </button>
+            <button type="button" className={voiceConnected ? 'primary' : ''} onClick={() => void toggleVoice()}>
+              {voiceConnected ? 'Voice: On' : 'Voice: Off'}
+            </button>
           </div>
         </div>
         <p className="header-subtitle" style={{ textAlign: 'center' }}>
@@ -494,21 +487,6 @@ export default function App() {
                 ))}
               </div>
             )}
-            {msg.role === 'assistant' && msg.content && msg.content !== '…' && (
-              <div className="bubble-actions">
-                <button
-                  type="button"
-                  className="play-aloud-btn"
-                  onClick={() => onPlayToggle(i, msg.content)}
-                  disabled={ttsLoadingIndex === i}
-                  aria-label={speakingIndex === i ? 'Stop read aloud' : 'Read aloud'}
-                  title={speakingIndex === i ? 'Stop' : 'Read aloud'}
-                >
-                  {speakingIndex === i ? <StopIcon /> : <PlayIcon />}
-                  <span>{ttsLoadingIndex === i ? 'Loading…' : speakingIndex === i ? 'Stop' : 'Play'}</span>
-                </button>
-              </div>
-            )}
             {msg.role === 'user' ? (
               <div className="md">{msg.content}</div>
             ) : (
@@ -524,7 +502,7 @@ export default function App() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. What's the duty cycle for MIG at 200A on 240V?"
           rows={2}
-          disabled={loading || recording || transcribing}
+          disabled={loading || voiceConnected}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -535,15 +513,20 @@ export default function App() {
         <div className="composer-actions">
           <button
             type="button"
-            className={`mic-btn ${recording ? 'recording' : ''}`}
-            onClick={() => void toggleMic()}
-            disabled={loading || transcribing}
-            aria-label={recording ? 'Stop recording and send' : 'Record question'}
-            title={recording ? 'Tap to stop and send' : 'Tap to record, tap again to transcribe and send'}
+            className={`mic-btn ${voiceConnected ? 'recording' : ''}`}
+            onClick={() => void toggleVoice()}
+            disabled={loading}
+            aria-label={voiceConnected ? 'End voice session' : 'Start voice session'}
+            title={voiceConnected ? 'End voice session' : 'Start voice session (ElevenLabs agent)'}
           >
             <MicIcon />
+            <span className="mic-bars" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
           </button>
-          <button type="button" className="primary" disabled={loading || recording || transcribing || !input.trim()} onClick={() => void send()}>
+          <button type="button" className="primary send-btn" disabled={loading || voiceConnected || !input.trim()} onClick={() => void send()}>
             {loading ? '…' : 'Send'}
           </button>
         </div>

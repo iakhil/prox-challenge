@@ -53,20 +53,19 @@ Optional: `uv run python -m backend.dev` starts Uvicorn and the Vite dev server 
 | `backend/main.py` | FastAPI: `/health`, `/api/chat/stream`, `/api/pages/...`, `/api/voice/*`, and remote MCP at `/api/mcp/manual`; optional `web/dist` SPA |
 | `scripts/sync_elevenlabs_kb.py` | Optional: upload `files/*.pdf` to ElevenLabs ConvAI knowledge base via API |
 | `backend/elevenlabs_voice.py` | Proxies [ElevenLabs](https://elevenlabs.io/) STT + TTS (API key server-side only) |
-| `web/` | Chat UI, `react-markdown`, artifact iframes, mic (STT) + per-message read-aloud (TTS) |
+| `web/` | Chat UI, `react-markdown`, artifact iframes, ConvAI voice via `@elevenlabs/client` |
 
-### Voice (ElevenLabs STT + TTS)
+### Voice (ElevenLabs Conversational AI)
 
-The UI does **not** use ConvAI WebSockets. Flow:
+- **Typed chat** still uses **`/api/chat/stream`** (Claude Agent SDK + manual MCP tools).
+- **Voice**: **Voice On** starts an ElevenLabs **ConvAI** WebSocket session. The browser loads a **signed URL** from `GET /api/voice/convai/signed-url` (API key stays server-side). Mic capture and TTS are handled by ElevenLabs; transcripts and agent text are mirrored into the chat log when the SDK emits those events.
+- Configure your **agent** in the ElevenLabs dashboard (voice, system prompt, **MCP** to `https://<your-host>/api/mcp/manual/` as **Streamable HTTP**, etc.).
 
-- **Mic**: record in the browser → `POST /api/voice/transcribe` (ElevenLabs speech-to-text) → the transcript is sent through the same **`/api/chat/stream`** path as typed messages (Claude + manual MCP tools).
-- **Read aloud**: each assistant message has a **Play** button → `POST /api/voice/speak` (ElevenLabs text-to-speech) → audio plays in the browser. Spoken text is a markdown-stripped version (`web/src/voice/plainText.ts`).
+**Cost**: Billed by your ElevenLabs plan; outbound HTTPS to `api.elevenlabs.io`.
 
-**Cost**: Billed by your ElevenLabs plan; the API needs outbound HTTPS to `api.elevenlabs.io`.
+**Env** (see [`.env.example`](.env.example)): **`ELEVENLABS_API_KEY`** and **`ELEVENLABS_AGENT_ID`**. Optional: `ELEVENLABS_VOICE_ID` only if you call legacy **`/api/voice/speak`** or **`/api/voice/transcribe`** directly.
 
-**Env** (see [`.env.example`](.env.example)): `ELEVENLABS_API_KEY`, and **`ELEVENLABS_VOICE_ID`** for TTS. Without them, chat still works; mic / play will error until configured.
-
-**Browser**: microphone permission required; use **HTTPS** or **localhost** so `getUserMedia` is allowed.
+**Browser**: microphone permission; **HTTPS** or **localhost** for `getUserMedia`.
 
 ### Knowledge extraction
 
@@ -85,8 +84,9 @@ Manuals live in `files/` (`owner-manual.pdf`, `quick-start-guide.pdf`, `selectio
 | `ANTHROPIC_MODEL` / `CLAUDE_MODEL` | Optional model override |
 | `OMNIPRO_PUBLIC_BASE` | Optional absolute prefix for image URLs in tools (e.g. public deploy origin) |
 | `CORS_ORIGINS` | Comma-separated allowed origins for the API (dev defaults include port 5173) |
-| `ELEVENLABS_API_KEY` | Required for ElevenLabs STT/TTS in the UI |
-| `ELEVENLABS_VOICE_ID` | Required for read-aloud (`/api/voice/speak`) |
+| `ELEVENLABS_API_KEY` | Required for ConvAI signed URL (and optional legacy STT/TTS routes) |
+| `ELEVENLABS_AGENT_ID` | Required for ConvAI voice in the UI |
+| `ELEVENLABS_VOICE_ID` | Optional; legacy `/api/voice/speak` only |
 | `VOICE_MANUAL_MCP_TOKEN` | Optional; if set, `/api/mcp/manual/*` requires `Authorization: Bearer ...` or `X-MCP-Auth-Token` |
 | `ELEVENLABS_STT_MODEL_ID` | Optional; default `scribe_v2` |
 | `ELEVENLABS_TTS_MODEL_ID` | Optional; default `eleven_multilingual_v2` |

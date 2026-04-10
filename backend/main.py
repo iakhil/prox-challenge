@@ -92,6 +92,39 @@ class SpeakBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=MAX_SPEAK_CHARS)
 
 
+class SignedUrlResponse(BaseModel):
+    signed_url: str
+
+
+@app.get("/api/voice/convai/signed-url", response_model=SignedUrlResponse)
+async def convai_signed_url():
+    """Mint a signed WebSocket URL for ElevenLabs Conversational AI (ConvAI)."""
+    api_key = os.environ.get("ELEVENLABS_API_KEY")
+    agent_id = (os.environ.get("ELEVENLABS_AGENT_ID") or "").strip()
+    if not api_key:
+        raise HTTPException(503, "Set ELEVENLABS_API_KEY in .env for voice")
+    if not agent_id:
+        raise HTTPException(503, "Set ELEVENLABS_AGENT_ID in .env for ConvAI voice")
+
+    base = os.environ.get("ELEVENLABS_API_BASE", "https://api.elevenlabs.io").rstrip("/")
+    url = f"{base}/v1/convai/conversation/get-signed-url"
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        r = await client.get(url, params={"agent_id": agent_id}, headers={"xi-api-key": api_key})
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            detail = r.text[:300]
+            logger.warning("ElevenLabs signed-url error %s: %s", r.status_code, detail)
+            raise HTTPException(502, f"ElevenLabs signed-url failed: {detail}") from e
+
+    data = r.json()
+    signed_url = data.get("signed_url")
+    if not isinstance(signed_url, str) or not signed_url.startswith("wss://"):
+        raise HTTPException(502, "Unexpected ElevenLabs signed-url response")
+    return SignedUrlResponse(signed_url=signed_url)
+
+
 @app.post("/api/voice/transcribe")
 async def voice_transcribe(audio: UploadFile = File(...)):
     if not os.environ.get("ELEVENLABS_API_KEY"):

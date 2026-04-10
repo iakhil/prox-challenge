@@ -117,26 +117,6 @@ button:disabled {
   align-self: stretch;
 }
 
-.bubble-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.play-aloud-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  padding: 0.35rem 0.55rem;
-}
-
-.play-aloud-btn svg {
-  flex-shrink: 0;
-  opacity: 0.9;
-}
-
 .bubble .meta {
   font-size: 0.75rem;
   color: var(--muted);
@@ -204,6 +184,7 @@ button:disabled {
 }
 
 .mic-btn {
+  position: relative;
   width: 44px;
   height: 44px;
   padding: 0;
@@ -211,6 +192,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
+  overflow: visible;
 }
 
 .mic-btn.recording {
@@ -220,14 +202,105 @@ button:disabled {
   animation: pulse-mic 1.2s ease-in-out infinite;
 }
 
+.mic-btn.recording::before,
+.mic-btn.recording::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  pointer-events: none;
+}
+
+.mic-btn.recording::before {
+  animation: mic-ring 1.4s ease-out infinite;
+}
+
+.mic-btn.recording::after {
+  animation: mic-ring 1.4s ease-out infinite 0.45s;
+}
+
 .mic-btn svg {
   opacity: 0.95;
+  position: relative;
+  z-index: 2;
 }
 
 @keyframes pulse-mic {
+  0%,
+  100% {
+    transform: scale(1);
+  }
   50% {
+    transform: scale(1.04);
     opacity: 0.85;
   }
+}
+
+.mic-bars {
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  z-index: 3;
+}
+
+.mic-btn.recording .mic-bars {
+  display: inline-flex;
+}
+
+.mic-bars span {
+  width: 2px;
+  height: 7px;
+  border-radius: 999px;
+  background: #fda4af;
+  animation: mic-bars 650ms ease-in-out infinite;
+}
+
+.mic-bars span:nth-child(2) {
+  animation-delay: 100ms;
+}
+
+.mic-bars span:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+@keyframes mic-ring {
+  0% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.34);
+  }
+}
+
+@keyframes mic-bars {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1.15);
+  }
+}
+
+.send-btn {
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.34), rgba(34, 197, 94, 0.2));
+  border-color: rgba(34, 197, 94, 0.65);
+  color: #dcfce7;
+}
+
+.send-btn:hover:not(:disabled) {
+  border-color: rgba(74, 222, 128, 0.9);
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.42), rgba(34, 197, 94, 0.24));
 }
 
 
