@@ -10,21 +10,18 @@
 #
 # ElevenLabs MCP URL: https://<service>/api/mcp/manual/
 #
+# Web UI is built inside Docker (see Dockerfile) into web/dist so the API can serve the SPA on the same URL.
 # Ensure `files/*.pdf` are in the repo (or add a persistent disk + seeding) so startup extraction can populate data/.
 
 services:
   - type: web
     name: omnipro-api
-    runtime: python
+    runtime: docker
     plan: starter
     region: oregon
-    # uv is available automatically when uv.lock exists: https://render.com/docs/uv-version
-    buildCommand: uv sync --frozen --no-dev
-    startCommand: uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.13.5"
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OMNIPRO_PUBLIC_BASE

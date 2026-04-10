@@ -94,7 +94,9 @@ Manuals live in `files/` (`owner-manual.pdf`, `quick-start-guide.pdf`, `selectio
 
 ### Optional hosting
 
-Containerize with the same `uv sync` + `npm ci` + `npm run build` flow; expose one port and run Uvicorn. Set `CORS_ORIGINS` and `OMNIPRO_PUBLIC_BASE` to your public origin. The [Agent SDK hosting notes](https://platform.claude.com/docs/en/agent-sdk/hosting) apply (outbound HTTPS to Anthropic, sufficient RAM for the CLI-backed SDK).
+**Render:** [`render.yaml`](render.yaml) deploys a **Docker** image ([`Dockerfile`](Dockerfile)) that runs `npm run build` for `web/` then starts Uvicorn, so the same service URL serves `/api/*` and the static UI under `/`. Set `CORS_ORIGINS` and `OMNIPRO_PUBLIC_BASE` in the Render dashboard.
+
+Locally you can match that with `npm run build --prefix web` then Uvicorn on port 8000. The [Agent SDK hosting notes](https://platform.claude.com/docs/en/agent-sdk/hosting) apply (outbound HTTPS to Anthropic, sufficient RAM for the CLI-backed SDK).
 
 ---
 
