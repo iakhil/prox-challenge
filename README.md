@@ -2,6 +2,8 @@
 
 <img src="product.webp" alt="Vulcan OmniPro 220" width="400" /> <img src="product-inside.webp" alt="Vulcan OmniPro 220 — inside panel" width="400" />
 
+## Try it out: https://omnipro-api.onrender.com/
+
 ## Solution: OmniPro 220 agent
 
 This fork adds a **multimodal support agent** for the Vulcan OmniPro 220 using the **[Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/quickstart)** (Python): a FastAPI backend wraps `ClaudeSDKClient` with an in-process **MCP server** that searches extracted manual text and resolves page images. A **Vite + React** UI streams replies over **SSE**, renders **Markdown** (including manual figures), and shows **HTML artifacts** in a sandboxed iframe when the model emits fenced blocks with the language tag `omnipro-artifact` (see system prompt in `backend/agent_options.py`).
