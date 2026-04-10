@@ -33,7 +33,11 @@ async def lifespan(app: FastAPI):
             run_extraction()
         except Exception as e:
             logger.exception("Manual extraction failed: %s", e)
-    yield
+    # FastAPI does not propagate ASGI lifespan events to mounted sub-apps.
+    # Start the StreamableHTTP session manager explicitly so MCP tool calls work
+    # when mounted under this app (e.g. ElevenLabs MCP integration).
+    async with manual_remote_mcp.session_manager.run():
+        yield
     await sessions.close_all()
 
 
