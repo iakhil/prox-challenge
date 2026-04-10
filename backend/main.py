@@ -96,6 +96,19 @@ class SignedUrlResponse(BaseModel):
     signed_url: str
 
 
+class AgentIdResponse(BaseModel):
+    agent_id: str
+
+
+@app.get("/api/voice/convai/agent-id", response_model=AgentIdResponse)
+async def convai_agent_id():
+    """Expose ConvAI agent id for browser-side fallback sessions."""
+    agent_id = (os.environ.get("ELEVENLABS_AGENT_ID") or "").strip()
+    if not agent_id:
+        raise HTTPException(503, "Set ELEVENLABS_AGENT_ID in .env for ConvAI voice")
+    return AgentIdResponse(agent_id=agent_id)
+
+
 @app.get("/api/voice/convai/signed-url", response_model=SignedUrlResponse)
 async def convai_signed_url():
     """Mint a signed WebSocket URL for ElevenLabs Conversational AI (ConvAI)."""

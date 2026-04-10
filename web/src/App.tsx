@@ -322,27 +322,17 @@ export default function App() {
     }
     try {
       seenMcpToolCallsRef.current.clear()
-      const r = await fetch('/api/voice/convai/signed-url')
-      if (!r.ok) {
-        const err = await r.text()
-        throw new Error(err || r.statusText)
-      }
-      const data = (await r.json()) as { signed_url?: string }
-      const signedUrl = data.signed_url
-      if (!signedUrl) throw new Error('Missing signed_url')
-
-      const conv = await Conversation.startSession({
-        signedUrl,
+      const callbacks = {
         connectionType: 'websocket',
         onConnect: () => setVoiceConnected(true),
         onDisconnect: () => {
           conversationRef.current = null
           setVoiceConnected(false)
         },
-        onError: (m) => {
+        onError: (m: unknown) => {
           setError(typeof m === 'string' ? m : JSON.stringify(m))
         },
-        onMCPToolCall: (call) => {
+        onMCPToolCall: (call: unknown) => {
           // MCP tool call results do NOT come through `onMessage` (that callback is
           // higher-level chat messages). Listen here for manual page image results.
           const c = call as McpToolCallSuccess
@@ -353,7 +343,7 @@ export default function App() {
           const imageMd = imageMarkdownFromMcpSuccess(c)
           if (imageMd.length === 0) return
 
-          setMessages((m) => {
+          setMessages((m: ChatMsg[]) => {
             const copy = [...m]
             const append = `\n\n${imageMd.join('\n\n')}`
             const last = copy[copy.length - 1]
@@ -368,7 +358,7 @@ export default function App() {
             return copy
           })
         },
-        onMessage: (message) => {
+        onMessage: (message: unknown) => {
           const msg = message as {
             type?: string
             user_transcription_event?: { user_transcript?: string }
@@ -413,7 +403,53 @@ export default function App() {
             }
           }
         },
-      })
+      } as const
+
+      let conv: Conversation | null = null
+      let signedUrlError: string | null = null
+
+      try {
+        const r = await fetch('/api/voice/convai/signed-url')
+        if (!r.ok) {
+          const err = await r.text()
+          throw new Error(err || r.statusText)
+        }
+        const data = (await r.json()) as { signed_url?: string }
+        const signedUrl = data.signed_url
+        if (!signedUrl) throw new Error('Missing signed_url')
+        conv = await Conversation.startSession({
+          signedUrl,
+          ...callbacks,
+        })
+      } catch (e: unknown) {
+        signedUrlError = e instanceof Error ? e.message : String(e)
+      }
+
+      if (!conv) {
+        const r = await fetch('/api/voice/convai/agent-id')
+        if (!r.ok) {
+          const err = await r.text()
+          throw new Error(
+            signedUrlError
+              ? `Signed URL failed (${signedUrlError}) and agent-id fallback failed (${err || r.statusText}).`
+              : (err || r.statusText),
+          )
+        }
+        const data = (await r.json()) as { agent_id?: string }
+        const agentId = (data.agent_id || '').trim()
+        if (!agentId) {
+          throw new Error(
+            signedUrlError
+              ? `Signed URL failed (${signedUrlError}) and agent-id fallback returned no agent id.`
+              : 'Missing agent id for voice session.',
+          )
+        }
+        conv = await Conversation.startSession({
+          agentId,
+          ...callbacks,
+        })
+      }
+
       conversationRef.current = conv
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))

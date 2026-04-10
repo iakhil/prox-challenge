@@ -58,7 +58,7 @@ Optional: `uv run python -m backend.dev` starts Uvicorn and the Vite dev server 
 ### Voice (ElevenLabs Conversational AI)
 
 - **Typed chat** still uses **`/api/chat/stream`** (Claude Agent SDK + manual MCP tools).
-- **Voice**: **Voice On** starts an ElevenLabs **ConvAI** WebSocket session. The browser loads a **signed URL** from `GET /api/voice/convai/signed-url` (API key stays server-side). Mic capture and TTS are handled by ElevenLabs; transcripts and agent text are mirrored into the chat log when the SDK emits those events.
+- **Voice**: **Voice On** starts an ElevenLabs **ConvAI** WebSocket session. The UI first tries `GET /api/voice/convai/signed-url` (API key server-side). If that fails in restricted hosting environments, it automatically falls back to browser-side `agentId` startup via `GET /api/voice/convai/agent-id`.
 - Configure your **agent** in the ElevenLabs dashboard (voice, system prompt, **MCP** to `https://<your-host>/api/mcp/manual/` as **Streamable HTTP**, etc.).
 
 **Cost**: Billed by your ElevenLabs plan; outbound HTTPS to `api.elevenlabs.io`.
@@ -85,7 +85,7 @@ Manuals live in `files/` (`owner-manual.pdf`, `quick-start-guide.pdf`, `selectio
 | `OMNIPRO_PUBLIC_BASE` | Optional absolute prefix for image URLs in tools (e.g. public deploy origin) |
 | `CORS_ORIGINS` | Comma-separated allowed origins for the API (dev defaults include port 5173) |
 | `ELEVENLABS_API_KEY` | Required for ConvAI signed URL (and optional legacy STT/TTS routes) |
-| `ELEVENLABS_AGENT_ID` | Required for ConvAI voice in the UI |
+| `ELEVENLABS_AGENT_ID` | Required for ConvAI voice in the UI (used by signed-url flow and browser fallback) |
 | `ELEVENLABS_VOICE_ID` | Optional; legacy `/api/voice/speak` only |
 | `VOICE_MANUAL_MCP_TOKEN` | Optional; if set, `/api/mcp/manual/*` requires `Authorization: Bearer ...` or `X-MCP-Auth-Token` |
 | `ELEVENLABS_STT_MODEL_ID` | Optional; default `scribe_v2` |
