@@ -8,6 +8,7 @@ from typing import Any
 
 from claude_agent_sdk import ToolAnnotations, create_sdk_mcp_server, tool
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from backend.manual_index import load_doc_meta, page_png_relative, read_page_text, search_pages
 
@@ -128,6 +129,10 @@ manual_remote_mcp = FastMCP(
     name="manual-remote",
     instructions="Read-only manual search and page image lookup for the Vulcan OmniPro 220.",
     streamable_http_path="/",
+    # This FastMCP instance is mounted under the main FastAPI app on Render.
+    # FastMCP auto-enables DNS rebinding protection for localhost hosts, which
+    # rejects non-local Host headers (e.g. <service>.onrender.com) with 421.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
