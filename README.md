@@ -2,7 +2,105 @@
 
 <img src="product.webp" alt="Vulcan OmniPro 220" width="400" /> <img src="product-inside.webp" alt="Vulcan OmniPro 220 — inside panel" width="400" />
 
-## The Product
+## Solution: OmniPro 220 agent
+
+This fork adds a **multimodal support agent** for the Vulcan OmniPro 220 using the **[Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/quickstart)** (Python): a FastAPI backend wraps `ClaudeSDKClient` with an in-process **MCP server** that searches extracted manual text and resolves page images. A **Vite + React** UI streams replies over **SSE**, renders **Markdown** (including manual figures), and shows **HTML artifacts** in a sandboxed iframe when the model emits fenced blocks with the language tag `omnipro-artifact` (see system prompt in `backend/agent_options.py`).
+
+### Quick start (about two minutes)
+
+```bash
+git clone <your-fork>
+cd <your-fork>
+cp .env.example .env
+# Add your Anthropic API key to .env as ANTHROPIC_API_KEY=...
+
+uv sync
+npm ci --prefix web
+```
+
+**Development (API + hot-reload UI):** run both processes — the UI proxies `/api` to the backend.
+
+```bash
+# Terminal 1
+uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+
+# Terminal 2
+cd web && npm run dev
+```
+
+Open **http://127.0.0.1:5173**. The first API boot extracts PDFs under `files/` into `data/` (text + PNG per page) if that cache is missing.
+
+**Single-process demo (API + built static UI on port 8000):**
+
+```bash
+npm run build --prefix web
+uv run uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+Then open **http://127.0.0.1:8000/** (same origin as `/api`, so no CORS issues).
+
+Optional: `uv run python -m backend.dev` starts Uvicorn and the Vite dev server together (requires `npm` on `PATH`).
+
+### Architecture
+
+| Piece | Role |
+| --- | --- |
+| `scripts/extract_manuals.py` | PyMuPDF: per-page `.txt` + `.png` under `data/extracted/` and `data/pages/` |
+| `backend/manual_index.py` | Simple ranked search over extracted text |
+| `backend/manual_mcp.py` | `@tool` MCP tools: `search_manual`, `read_manual_page_text`, `get_manual_page_image`, `list_manual_docs` |
+| `backend/agent_options.py` | `ClaudeAgentOptions`: system prompt, `mcp_servers`, read-only tool allowlist (`Read`, `Grep`, `Glob` + manual tools), `disallowed_tools` for write/bash/web |
+| `backend/chat.py` | `ClaudeSDKClient` per HTTP session; SSE serialization |
+| `backend/main.py` | FastAPI: `/health`, `/api/chat/stream`, `/api/pages/...`, `/api/voice/*`, and remote MCP at `/api/mcp/manual`; optional `web/dist` SPA |
+| `scripts/sync_elevenlabs_kb.py` | Optional: upload `files/*.pdf` to ElevenLabs ConvAI knowledge base via API |
+| `backend/elevenlabs_voice.py` | Proxies [ElevenLabs](https://elevenlabs.io/) STT + TTS (API key server-side only) |
+| `web/` | Chat UI, `react-markdown`, artifact iframes, mic (STT) + per-message read-aloud (TTS) |
+
+### Voice (ElevenLabs STT + TTS)
+
+The UI does **not** use ConvAI WebSockets. Flow:
+
+- **Mic**: record in the browser → `POST /api/voice/transcribe` (ElevenLabs speech-to-text) → the transcript is sent through the same **`/api/chat/stream`** path as typed messages (Claude + manual MCP tools).
+- **Read aloud**: each assistant message has a **Play** button → `POST /api/voice/speak` (ElevenLabs text-to-speech) → audio plays in the browser. Spoken text is a markdown-stripped version (`web/src/voice/plainText.ts`).
+
+**Cost**: Billed by your ElevenLabs plan; the API needs outbound HTTPS to `api.elevenlabs.io`.
+
+**Env** (see [`.env.example`](.env.example)): `ELEVENLABS_API_KEY`, and **`ELEVENLABS_VOICE_ID`** for TTS. Without them, chat still works; mic / play will error until configured.
+
+**Browser**: microphone permission required; use **HTTPS** or **localhost** so `getUserMedia` is allowed.
+
+### Knowledge extraction
+
+Manuals live in `files/` (`owner-manual.pdf`, `quick-start-guide.pdf`, `selection-chart.pdf`). Extraction is **idempotent** and **gitignored** (`data/`). The agent is instructed to **call manual tools before stating facts** so duty cycles, polarity, and troubleshooting stay tied to the PDFs.
+
+### Multimodal behavior
+
+- **Manual images**: Tools return `/api/pages/{doc_id}/{page}.png` so the model can paste Markdown images the UI loads via the Vite proxy or same-origin static hosting.
+- **Synthetic / interactive**: The system prompt asks for self-contained HTML in fenced blocks whose language tag is `omnipro-artifact`; the UI strips those blocks and renders them with `sandbox="allow-scripts"`.
+
+### Environment
+
+| Variable | Meaning |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Required for the Agent SDK |
+| `ANTHROPIC_MODEL` / `CLAUDE_MODEL` | Optional model override |
+| `OMNIPRO_PUBLIC_BASE` | Optional absolute prefix for image URLs in tools (e.g. public deploy origin) |
+| `CORS_ORIGINS` | Comma-separated allowed origins for the API (dev defaults include port 5173) |
+| `ELEVENLABS_API_KEY` | Required for ElevenLabs STT/TTS in the UI |
+| `ELEVENLABS_VOICE_ID` | Required for read-aloud (`/api/voice/speak`) |
+| `VOICE_MANUAL_MCP_TOKEN` | Optional; if set, `/api/mcp/manual/*` requires `Authorization: Bearer ...` or `X-MCP-Auth-Token` |
+| `ELEVENLABS_STT_MODEL_ID` | Optional; default `scribe_v2` |
+| `ELEVENLABS_TTS_MODEL_ID` | Optional; default `eleven_multilingual_v2` |
+| `ELEVENLABS_TTS_OUTPUT_FORMAT` | Optional; default `mp3_44100_128` |
+
+### Optional hosting
+
+Containerize with the same `uv sync` + `npm ci` + `npm run build` flow; expose one port and run Uvicorn. Set `CORS_ORIGINS` and `OMNIPRO_PUBLIC_BASE` to your public origin. The [Agent SDK hosting notes](https://platform.claude.com/docs/en/agent-sdk/hosting) apply (outbound HTTPS to Anthropic, sufficient RAM for the CLI-backed SDK).
+
+---
+
+## Challenge brief
+
+### The Product
 
 The [Vulcan OmniPro 220](https://www.harborfreight.com/omnipro-220-industrial-multiprocess-welder-with-120240v-input-57812.html) is a multiprocess welding system sold by Harbor Freight. It supports four welding processes (MIG, Flux-Cored, TIG, and Stick), runs on both 120V and 240V input, and has an LCD-based synergic control system.
 

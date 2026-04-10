@@ -1,0 +1,39 @@
+# Render Blueprint (Infrastructure as Code)
+# https://render.com/docs/blueprint-spec
+#
+# After deploy, set env vars in the Render dashboard (or link an environment group):
+#   - ANTHROPIC_API_KEY (required for /api/chat/stream)
+#   - OMNIPRO_PUBLIC_BASE = https://<this-service-hostname> (so manual tool image URLs are absolute for MCP / clients)
+#   - CORS_ORIGINS = comma-separated origins (e.g. https://your-frontend.com,http://localhost:5173)
+#   - ELEVENLABS_* if you use STT/TTS from this API
+#   - VOICE_MANUAL_MCP_TOKEN if you protect /api/mcp/manual
+#
+# ElevenLabs MCP URL: https://<service>/api/mcp/manual/
+#
+# Ensure `files/*.pdf` are in the repo (or add a persistent disk + seeding) so startup extraction can populate data/.
+
+services:
+  - type: web
+    name: omnipro-api
+    runtime: python
+    plan: starter
+    region: oregon
+    # uv is available automatically when uv.lock exists: https://render.com/docs/uv-version
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: uv run uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OMNIPRO_PUBLIC_BASE
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
+      - key: VOICE_MANUAL_MCP_TOKEN
+        sync: false
