@@ -52,9 +52,41 @@ class ChatSession:
             await self._client.__aexit__(None, None, None)
             self._started = False
 
-    async def send(self, text: str) -> AsyncIterator[dict[str, Any]]:
+    async def send(self, text: str, image_data_url: str | None = None) -> AsyncIterator[dict[str, Any]]:
         await self.start()
-        await self._client.query(text.strip())
+        prompt_text = text.strip()
+        if image_data_url:
+            data_url = image_data_url.strip()
+            header, sep, data = data_url.partition(",")
+            if sep != "," or not header.startswith("data:image/") or ";base64" not in header:
+                raise ValueError("Unsupported image payload. Provide a base64 data URL.")
+            media_type = header[len("data:") : header.index(";")]
+            payload: dict[str, Any] = {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt_text or "Please analyze this image."},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": data,
+                            },
+                        },
+                    ],
+                },
+                "parent_tool_use_id": None,
+                "session_id": "default",
+            }
+
+            async def one_message() -> AsyncIterator[dict[str, Any]]:
+                yield payload
+
+            await self._client.query(one_message())
+        else:
+            await self._client.query(prompt_text)
         async for message in self._client.receive_response():
             for event in serialize_message(message):
                 yield event

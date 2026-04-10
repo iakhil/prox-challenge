@@ -1,10 +1,8 @@
 # Prox Founding Engineer Challenge
 
+## Try it out: [https://omnipro-api.onrender.com/](https://omnipro-api.onrender.com/)
 
-
-## Try it out: https://omnipro-api.onrender.com/
-
-<img src="product.webp" alt="Vulcan OmniPro 220" width="400" /> <img src="product-inside.webp" alt="Vulcan OmniPro 220 — inside panel" width="400" />
+ 
 
 ## Solution: OmniPro 220 agent
 
@@ -32,7 +30,7 @@ uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 cd web && npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. The first API boot extracts PDFs under `files/` into `data/` (text + PNG per page) if that cache is missing.
+Open **[http://127.0.0.1:5173](http://127.0.0.1:5173)**. The first API boot extracts PDFs under `files/` into `data/` (text + PNG per page) if that cache is missing.
 
 **Single-process demo (API + built static UI on port 8000):**
 
@@ -41,33 +39,35 @@ npm run build --prefix web
 uv run uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Then open **http://127.0.0.1:8000/** (same origin as `/api`, so no CORS issues).
+Then open **[http://127.0.0.1:8000/](http://127.0.0.1:8000/)** (same origin as `/api`, so no CORS issues).
 
 Optional: `uv run python -m backend.dev` starts Uvicorn and the Vite dev server together (requires `npm` on `PATH`).
 
 ### Architecture
 
-| Piece | Role |
-| --- | --- |
-| `scripts/extract_manuals.py` | PyMuPDF: per-page `.txt` + `.png` under `data/extracted/` and `data/pages/` |
-| `backend/manual_index.py` | Simple ranked search over extracted text |
-| `backend/manual_mcp.py` | `@tool` MCP tools: `search_manual`, `read_manual_page_text`, `get_manual_page_image`, `list_manual_docs` |
-| `backend/agent_options.py` | `ClaudeAgentOptions`: system prompt, `mcp_servers`, read-only tool allowlist (`Read`, `Grep`, `Glob` + manual tools), `disallowed_tools` for write/bash/web |
-| `backend/chat.py` | `ClaudeSDKClient` per HTTP session; SSE serialization |
-| `backend/main.py` | FastAPI: `/health`, `/api/chat/stream`, `/api/pages/...`, `/api/voice/*`, and remote MCP at `/api/mcp/manual`; optional `web/dist` SPA |
-| `scripts/sync_elevenlabs_kb.py` | Optional: upload `files/*.pdf` to ElevenLabs ConvAI knowledge base via API |
-| `backend/elevenlabs_voice.py` | Proxies [ElevenLabs](https://elevenlabs.io/) STT + TTS (API key server-side only) |
-| `web/` | Chat UI, `react-markdown`, artifact iframes, ConvAI voice via `@elevenlabs/client` |
+
+| Piece                           | Role                                                                                                                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/extract_manuals.py`    | PyMuPDF: per-page `.txt` + `.png` under `data/extracted/` and `data/pages/`                                                                                 |
+| `backend/manual_index.py`       | Simple ranked search over extracted text                                                                                                                    |
+| `backend/manual_mcp.py`         | `@tool` MCP tools: `search_manual`, `read_manual_page_text`, `get_manual_page_image`, `list_manual_docs`                                                    |
+| `backend/agent_options.py`      | `ClaudeAgentOptions`: system prompt, `mcp_servers`, read-only tool allowlist (`Read`, `Grep`, `Glob` + manual tools), `disallowed_tools` for write/bash/web |
+| `backend/chat.py`               | `ClaudeSDKClient` per HTTP session; SSE serialization                                                                                                       |
+| `backend/main.py`               | FastAPI: `/health`, `/api/chat/stream`, `/api/pages/...`, `/api/voice/*`, and remote MCP at `/api/mcp/manual`; optional `web/dist` SPA                      |
+| `scripts/sync_elevenlabs_kb.py` | Optional: upload `files/*.pdf` to ElevenLabs ConvAI knowledge base via API                                                                                  |
+| `backend/elevenlabs_voice.py`   | Proxies [ElevenLabs](https://elevenlabs.io/) STT + TTS (API key server-side only)                                                                           |
+| `web/`                          | Chat UI, `react-markdown`, artifact iframes, ConvAI voice via `@elevenlabs/client`                                                                          |
+
 
 ### Voice (ElevenLabs Conversational AI)
 
-- **Typed chat** still uses **`/api/chat/stream`** (Claude Agent SDK + manual MCP tools).
+- **Typed chat** still uses `**/api/chat/stream`** (Claude Agent SDK + manual MCP tools).
 - **Voice**: **Voice On** starts an ElevenLabs **ConvAI** WebSocket session. The UI first tries `GET /api/voice/convai/signed-url` (API key server-side). If that fails in restricted hosting environments, it automatically falls back to browser-side `agentId` startup via `GET /api/voice/convai/agent-id`.
 - Configure your **agent** in the ElevenLabs dashboard (voice, system prompt, **MCP** to `https://<your-host>/api/mcp/manual/` as **Streamable HTTP**, etc.).
 
 **Cost**: Billed by your ElevenLabs plan; outbound HTTPS to `api.elevenlabs.io`.
 
-**Env** (see [`.env.example`](.env.example)): **`ELEVENLABS_API_KEY`** and **`ELEVENLABS_AGENT_ID`**. Optional: `ELEVENLABS_VOICE_ID` only if you call legacy **`/api/voice/speak`** or **`/api/voice/transcribe`** directly.
+**Env** (see `[.env.example](.env.example)`): `**ELEVENLABS_API_KEY`** and `**ELEVENLABS_AGENT_ID**`. Optional: `ELEVENLABS_VOICE_ID` only if you call legacy `**/api/voice/speak**` or `**/api/voice/transcribe**` directly.
 
 **Browser**: microphone permission; **HTTPS** or **localhost** for `getUserMedia`.
 
@@ -78,27 +78,30 @@ Manuals live in `files/` (`owner-manual.pdf`, `quick-start-guide.pdf`, `selectio
 ### Multimodal behavior
 
 - **Manual images**: Tools return `/api/pages/{doc_id}/{page}.png` so the model can paste Markdown images the UI loads via the Vite proxy or same-origin static hosting.
+- **User image input**: The composer supports attaching a local image (up to 5MB). The backend forwards it to Claude as a base64 image content block for visual troubleshooting and question answering.
 - **Synthetic / interactive**: The system prompt asks for self-contained HTML in fenced blocks whose language tag is `omnipro-artifact`; the UI strips those blocks and renders them with `sandbox="allow-scripts"`.
 
 ### Environment
 
-| Variable | Meaning |
-| --- | --- |
-| `ANTHROPIC_API_KEY` | Required for the Agent SDK |
-| `ANTHROPIC_MODEL` / `CLAUDE_MODEL` | Optional model override |
-| `OMNIPRO_PUBLIC_BASE` | Optional absolute prefix for image URLs in tools (e.g. public deploy origin) |
-| `CORS_ORIGINS` | Comma-separated allowed origins for the API (dev defaults include port 5173) |
-| `ELEVENLABS_API_KEY` | Required for ConvAI signed URL (and optional legacy STT/TTS routes) |
-| `ELEVENLABS_AGENT_ID` | Required for ConvAI voice in the UI (used by signed-url flow and browser fallback) |
-| `ELEVENLABS_VOICE_ID` | Optional; legacy `/api/voice/speak` only |
-| `VOICE_MANUAL_MCP_TOKEN` | Optional; if set, `/api/mcp/manual/*` requires `Authorization: Bearer ...` or `X-MCP-Auth-Token` |
-| `ELEVENLABS_STT_MODEL_ID` | Optional; default `scribe_v2` |
-| `ELEVENLABS_TTS_MODEL_ID` | Optional; default `eleven_multilingual_v2` |
-| `ELEVENLABS_TTS_OUTPUT_FORMAT` | Optional; default `mp3_44100_128` |
+
+| Variable                           | Meaning                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY`                | Required for the Agent SDK                                                                       |
+| `ANTHROPIC_MODEL` / `CLAUDE_MODEL` | Optional model override                                                                          |
+| `OMNIPRO_PUBLIC_BASE`              | Optional absolute prefix for image URLs in tools (e.g. public deploy origin)                     |
+| `CORS_ORIGINS`                     | Comma-separated allowed origins for the API (dev defaults include port 5173)                     |
+| `ELEVENLABS_API_KEY`               | Required for ConvAI signed URL (and optional legacy STT/TTS routes)                              |
+| `ELEVENLABS_AGENT_ID`              | Required for ConvAI voice in the UI (used by signed-url flow and browser fallback)               |
+| `ELEVENLABS_VOICE_ID`              | Optional; legacy `/api/voice/speak` only                                                         |
+| `VOICE_MANUAL_MCP_TOKEN`           | Optional; if set, `/api/mcp/manual/`* requires `Authorization: Bearer ...` or `X-MCP-Auth-Token` |
+| `ELEVENLABS_STT_MODEL_ID`          | Optional; default `scribe_v2`                                                                    |
+| `ELEVENLABS_TTS_MODEL_ID`          | Optional; default `eleven_multilingual_v2`                                                       |
+| `ELEVENLABS_TTS_OUTPUT_FORMAT`     | Optional; default `mp3_44100_128`                                                                |
+
 
 ### Optional hosting
 
-**Render:** [`render.yaml`](render.yaml) deploys a **Docker** image ([`Dockerfile`](Dockerfile)) that runs `npm run build` for `web/` then starts Uvicorn, so the same service URL serves `/api/*` and the static UI under `/`. Set `CORS_ORIGINS` and `OMNIPRO_PUBLIC_BASE` in the Render dashboard.
+**Render:** `[render.yaml](render.yaml)` deploys a **Docker** image (`[Dockerfile](Dockerfile)`) that runs `npm run build` for `web/` then starts Uvicorn, so the same service URL serves `/api/`* and the static UI under `/`. Set `CORS_ORIGINS` and `OMNIPRO_PUBLIC_BASE` in the Render dashboard.
 
 Locally you can match that with `npm run build --prefix web` then Uvicorn on port 8000. The [Agent SDK hosting notes](https://platform.claude.com/docs/en/agent-sdk/hosting) apply (outbound HTTPS to Anthropic, sufficient RAM for the CLI-backed SDK).
 
@@ -114,7 +117,7 @@ Its owner's manual is 48 pages of dense technical content. Duty cycle matrices a
 
 This is exactly the kind of product Prox exists for. Nobody knows how to use this machine straight out of the box but has time to read 48 page manual, but a complicated machine needs expert-level support.
 
-Additional video: https://www.youtube.com/watch?v=kxGDoGcnhBw
+Additional video: [https://www.youtube.com/watch?v=kxGDoGcnhBw](https://www.youtube.com/watch?v=kxGDoGcnhBw)
 
 ## Your Job
 
@@ -147,8 +150,9 @@ This is the most important part. Your agent must not be text-only.
 When something is too cognitively hard to explain in words, the agent should draw it. Real-time diagrams, interactive schematics, visual walkthroughs generated through code.
 
 For your agent to handle these responses well you need to reverse engineer Claude artifacts. Here are two places where you can start:
-- https://claude.ai/artifacts (see how Claude renders interactive artifacts in chat)
-- https://www.reidbarber.com/blog/reverse-engineering-claude-artifacts
+
+- [https://claude.ai/artifacts](https://claude.ai/artifacts) (see how Claude renders interactive artifacts in chat)
+- [https://www.reidbarber.com/blog/reverse-engineering-claude-artifacts](https://www.reidbarber.com/blog/reverse-engineering-claude-artifacts)
 
 ### 3. Tone and Helpfulness
 

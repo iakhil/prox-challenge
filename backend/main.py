@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.chat import SessionStore, sse_json
 from backend.elevenlabs_voice import MAX_SPEAK_CHARS, text_to_speech_bytes, transcribe_audio
@@ -84,8 +85,27 @@ def get_page_png(doc_id: str, page: int):
 
 
 class ChatBody(BaseModel):
-    message: str = Field(..., min_length=1)
+    message: str = Field(default="")
+    image_data_url: str | None = None
     session_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "ChatBody":
+        text = self.message.strip()
+        image = (self.image_data_url or "").strip()
+        if not text and not image:
+            raise ValueError("Provide a message or an image.")
+        if image:
+            header, sep, data = image.partition(",")
+            if sep != "," or not header.startswith("data:image/") or ";base64" not in header:
+                raise ValueError("image_data_url must be a base64 data URL for an image.")
+            try:
+                raw = base64.b64decode(data, validate=True)
+            except Exception as e:
+                raise ValueError("image_data_url is not valid base64.") from e
+            if len(raw) > 5 * 1024 * 1024:
+                raise ValueError("Image too large (max 5MB).")
+        return self
 
 
 class ResetBody(BaseModel):
@@ -193,7 +213,7 @@ async def chat_stream(body: ChatBody, request: Request):
     async def gen():
         yield sse_json({"event": "session", "data": {"session_id": sid}})
         try:
-            async for evt in session.send(body.message):
+            async for evt in session.send(body.message, body.image_data_url):
                 if await request.is_disconnected():
                     break
                 yield sse_json(evt)

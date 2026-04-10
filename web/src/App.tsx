@@ -9,6 +9,8 @@ type ChatMsg = {
   role: 'user' | 'assistant'
   content: string
   tools?: string[]
+  imageDataUrl?: string
+  imageName?: string
 }
 
 type Part = { type: 'md'; text: string } | { type: 'artifact'; html: string }
@@ -175,13 +177,16 @@ export default function App() {
   )
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
+  const [attachedImage, setAttachedImage] = useState<{ dataUrl: string; name: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [voiceConnected, setVoiceConnected] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
   const conversationRef = useRef<Conversation | null>(null)
   const seenMcpToolCallsRef = useRef<Set<string>>(new Set())
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (sessionId) localStorage.setItem(SESSION_KEY, sessionId)
@@ -199,14 +204,15 @@ export default function App() {
   }, [])
 
   const sendWithText = useCallback(
-    async (text: string) => {
+    async (text: string, image?: { dataUrl: string; name: string } | null) => {
       const trimmed = text.trim()
-      if (!trimmed || loading) return
+      const imageDataUrl = image?.dataUrl
+      if ((!trimmed && !imageDataUrl) || loading) return
       setError(null)
       setLoading(true)
       setMessages((m) => [
         ...m,
-        { role: 'user', content: trimmed },
+        { role: 'user', content: trimmed || 'Analyze this image.', imageDataUrl, imageName: image?.name },
         { role: 'assistant', content: '…', tools: [] },
       ])
 
@@ -221,7 +227,7 @@ export default function App() {
         const res = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: trimmed, session_id: sessionId }),
+          body: JSON.stringify({ message: trimmed, image_data_url: imageDataUrl, session_id: sessionId }),
           signal: ac.signal,
         })
         if (!res.ok) {
@@ -306,10 +312,44 @@ export default function App() {
 
   const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || loading) return
+    if ((!text && !attachedImage) || loading) return
     setInput('')
-    await sendWithText(text)
-  }, [input, loading, sendWithText])
+    const image = attachedImage
+    setAttachedImage(null)
+    await sendWithText(text, image)
+  }, [input, loading, sendWithText, attachedImage])
+
+  const onPickImage = useCallback(async (file: File | null) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please select an image file.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image too large (max 5MB).')
+      return
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result || ''))
+      reader.onerror = () => reject(new Error('Failed to read image file.'))
+      reader.readAsDataURL(file)
+    })
+    setAttachedImage({ dataUrl, name: file.name })
+    setError(null)
+  }, [])
+
+  const onDropImage = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
+      if (loading || voiceConnected) return
+      const file = e.dataTransfer.files?.[0] || null
+      void onPickImage(file)
+    },
+    [loading, voiceConnected, onPickImage],
+  )
 
   const startVoice = useCallback(async () => {
     if (voiceConnected) return
@@ -481,6 +521,7 @@ export default function App() {
     localStorage.removeItem(SESSION_KEY)
     setSessionId(null)
     setMessages([])
+    setAttachedImage(null)
     setError(null)
   }
 
@@ -524,7 +565,14 @@ export default function App() {
               </div>
             )}
             {msg.role === 'user' ? (
-              <div className="md">{msg.content}</div>
+              <div className="md">
+                {msg.content}
+                {msg.imageDataUrl && (
+                  <div className="user-image-wrap">
+                    <img src={msg.imageDataUrl} alt={msg.imageName || 'Uploaded image'} className="user-upload-image" />
+                  </div>
+                )}
+              </div>
             ) : (
               <AssistantBody text={msg.content} />
             )}
@@ -532,21 +580,66 @@ export default function App() {
         ))}
       </div>
 
-      <div className="composer">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="e.g. What's the duty cycle for MIG at 200A on 240V?"
-          rows={2}
-          disabled={loading || voiceConnected}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
+      <div
+        className={`composer ${dragActive ? 'drag-active' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (!loading && !voiceConnected) setDragActive(true)
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setDragActive(false)
+        }}
+        onDrop={onDropImage}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            void onPickImage(e.target.files?.[0] || null)
+            e.currentTarget.value = ''
           }}
         />
-        <div className="composer-actions">
+        {attachedImage && (
+          <div className="image-chip">
+            <span className="image-chip-name">{attachedImage.name}</span>
+            <button type="button" onClick={() => setAttachedImage(null)}>
+              Remove
+            </button>
+          </div>
+        )}
+        <div className="composer-main">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type in your question or drag and drop an image."
+            rows={2}
+            disabled={loading || voiceConnected}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
+          <button type="button" className="primary send-btn" disabled={loading || voiceConnected || (!input.trim() && !attachedImage)} onClick={() => void send()}>
+            {loading ? '…' : 'Send'}
+          </button>
+        </div>
+        <div className="composer-tools">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || voiceConnected}
+            title="Attach image"
+            aria-label="Attach image"
+          >
+            Image
+          </button>
           <button
             type="button"
             className={`mic-btn ${voiceConnected ? 'recording' : ''}`}
@@ -561,9 +654,6 @@ export default function App() {
               <span />
               <span />
             </span>
-          </button>
-          <button type="button" className="primary send-btn" disabled={loading || voiceConnected || !input.trim()} onClick={() => void send()}>
-            {loading ? '…' : 'Send'}
           </button>
         </div>
       </div>
